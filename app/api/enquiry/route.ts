@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { Resend } from "resend";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -9,6 +10,27 @@ type Enquiry = {
   phone: string;
   message: string;
 };
+
+function isValidFramerSignature(
+  secret: string,
+  submissionId: string,
+  payload: Buffer,
+  signature: string,
+) {
+  if (!/^sha256=[a-f0-9]{64}$/.test(signature)) {
+    return false;
+  }
+
+  const expectedSignature = `sha256=${createHmac("sha256", secret)
+    .update(payload)
+    .update(submissionId)
+    .digest("hex")}`;
+
+  return timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expectedSignature),
+  );
+}
 
 function parseEnquiry(value: unknown): Enquiry | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -48,6 +70,17 @@ function parseEnquiry(value: unknown): Enquiry | null {
 }
 
 export async function POST(request: Request) {
+  const signature = request.headers.get("framer-signature");
+  const submissionId = request.headers.get("framer-webhook-submission-id");
+  const webhookSecret = process.env.FRAMER_WEBHOOK_SECRET;
+
+  if (!signature || !submissionId || !webhookSecret) {
+    return Response.json(
+      { success: false, error: "Unauthorized." },
+      { status: 401 },
+    );
+  }
+
   if (!request.headers.get("content-type")?.includes("application/json")) {
     return Response.json(
       { success: false, error: "Content-Type must be application/json." },
@@ -63,10 +96,10 @@ export async function POST(request: Request) {
     );
   }
 
-  let rawBody: string;
+  let rawBody: Buffer;
 
   try {
-    rawBody = await request.text();
+    rawBody = Buffer.from(await request.arrayBuffer());
   } catch {
     return Response.json(
       { success: false, error: "Unable to read request body." },
@@ -74,16 +107,30 @@ export async function POST(request: Request) {
     );
   }
 
-  if (rawBody.length > MAX_BODY_SIZE) {
+  if (rawBody.byteLength > MAX_BODY_SIZE) {
     return Response.json(
       { success: false, error: "Request body is too large." },
       { status: 413 },
     );
   }
 
+  if (
+    !isValidFramerSignature(
+      webhookSecret,
+      submissionId,
+      rawBody,
+      signature,
+    )
+  ) {
+    return Response.json(
+      { success: false, error: "Unauthorized." },
+      { status: 401 },
+    );
+  }
+
   let body: unknown;
   try {
-    body = JSON.parse(rawBody);
+    body = JSON.parse(rawBody.toString("utf8"));
   } catch {
     return Response.json(
       { success: false, error: "Invalid JSON body." },
