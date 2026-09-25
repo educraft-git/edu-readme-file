@@ -32,6 +32,26 @@ function isValidFramerSignature(
   );
 }
 
+function isValidName(name: string) {
+  const length = Array.from(name).length;
+
+  return (
+    length >= 2 &&
+    length <= 100 &&
+    /^(?=.*\p{L})[\p{L}\p{M} .'’-]+$/u.test(name)
+  );
+}
+
+function isValidPhone(phone: string) {
+  const digitCount = (phone.match(/\d/g) ?? []).length;
+
+  return /^[+0-9 ().-]+$/.test(phone) && digitCount >= 8 && digitCount <= 15;
+}
+
+function isValidEmail(email: string) {
+  return email.length <= 254 && EMAIL_PATTERN.test(email);
+}
+
 function parseEnquiry(value: unknown): Enquiry | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -51,11 +71,9 @@ function parseEnquiry(value: unknown): Enquiry | null {
   const message = body.message?.trim() ?? "";
 
   if (
-    !name ||
-    name.length > 100 ||
-    !EMAIL_PATTERN.test(email) ||
-    email.length > 254 ||
-    phone.length > 50 ||
+    !isValidName(name) ||
+    !isValidEmail(email) ||
+    (phone !== "" && !isValidPhone(phone)) ||
     message.length > 5_000
   ) {
     return null;
